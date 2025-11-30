@@ -1,4 +1,4 @@
-import mongoose from "mongoose";
+import mongoose from 'mongoose';
 
 const UserSchema = new mongoose.Schema(
   {
@@ -16,47 +16,92 @@ const UserSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    code: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true, // tạo index để tìm nhanh bằng code
+    },
     location: {
       type: String,
-      default: "-",
+      default: '-',
     },
     slogan: {
       type: String,
-      default: "Say something about yourself 👋",
+      default: 'Say something about yourself 👋',
+    },
+    avatar: {
+      type: String,
+      default: 'https://res.cloudinary.com/djmeybzjk/image/upload/v1745252587/01_odv3vg.jpg',
     },
     contacts: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "users",
+        ref: 'users',
       },
     ],
-    groups: [
+
+    blockedUsers: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: "groups",
+        ref: 'users',
       },
     ],
-    avatar: {
-      type: String,
-    },
+    notifications: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'notifications',
+      },
+    ],
     status: {
       type: String,
-      enum: ["available", "busy", "invisible", "offline"],
-      default: "available",
+      enum: ['available', 'busy', 'invisible', 'offline'],
+      default: 'available',
+    },
+    lastSeenAt: {
+      type: Date,
     },
     isFirstLogin: {
       type: Boolean,
       default: true,
     },
+    is2FAEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    tempOTP: {
+      type: String,
+      default: null,
+    },
+    otpExpiresAt: {
+      type: Date,
+      default: null,
+    },
+    isDeviceVerificationEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    isLoginAlertEnabled: {
+      type: Boolean,
+      default: false,
+    },
+    trustedDevices: [
+      {
+        type: String,
+      },
+    ],
     role: {
       type: String,
-      enum: ["user", "admin"],
-      default: "user",
+      enum: ['user', 'admin'],
+      default: 'user',
     },
   },
   { timestamps: true }
 );
 
-const UserModel = mongoose.model("users", UserSchema);
+UserSchema.index({ status: 1 });
+UserSchema.index({ lastSeenAt: -1 });
+
+const UserModel = mongoose.model('users', UserSchema);
 
 export default UserModel;

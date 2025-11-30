@@ -1,8 +1,24 @@
-import UserModel from "../models/UserModel.js";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import dotenv from "dotenv";
-dotenv;
+import UserModel from '../models/UserModel.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { sendMail } from '../../services/MailService.js';
+import {
+  getLoginAlertTemplate,
+  getOTPTemplate,
+} from '../../services/TemplateEmail.js';
+
+const generateCode = (length) => {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
+};
+
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+};
 
 const generateAccessToken = (user) => {
   return jwt.sign(
@@ -12,10 +28,11 @@ const generateAccessToken = (user) => {
     },
     process.env.JWT_ACCESSTOKEN_KEY,
     {
-      expiresIn: "60s",
+      expiresIn: '60s',
     }
   );
 };
+
 const generateRefreshToken = (user) => {
   return jwt.sign(
     {
@@ -24,33 +41,56 @@ const generateRefreshToken = (user) => {
     },
     process.env.JWT_REFRESHTOKEN_KEY,
     {
-      expiresIn: "365d",
+      expiresIn: '365d',
     }
   );
+};
+
+// Helper: send login alert email (fire-and-forget)
+const sendLoginAlertEmail = (req, toEmail) => {
+  const userAgent = req.headers['user-agent'] || 'Unknown device';
+  const ipAddress = (req.headers['x-forwarded-for'] || req.ip || '').toString();
+  const loginTime = new Date().toLocaleString();
+  const html = getLoginAlertTemplate(loginTime, ipAddress, userAgent);
+  sendMail(toEmail, '🔐 Login Alert - Your account was accessed', html).catch(() => {});
 };
 
 export const register = async (req, res) => {
   const { email, password, username } = req.body;
   const salt = await bcrypt.genSalt(10);
   const hash = bcrypt.hashSync(password, salt);
+
   try {
     const user = await UserModel.findOne({ email });
     if (user) {
       return res.status(400).json({
         success: false,
-        message: "Email has been used",
+        message: 'Email has been used',
       });
     }
 
+    // Generate unique code
+    let code;
+    let codeExists = true;
+    do {
+      code = generateCode(8); // ví dụ: "aB3x9YzK"
+      const existingUser = await UserModel.findOne({ code });
+      if (!existingUser) codeExists = false;
+    } while (codeExists);
+
     const newUser = new UserModel({
-      email: email,
-      username: username,
+      email,
+      username,
       password: hash,
+      code, // gán code vào user
     });
+
     await newUser.save();
+
     return res.status(200).json({
       success: true,
-      message: "Register successfully",
+      message: 'Register successfully',
+      code: newUser.code, // trả về code để client có thể hiển thị
     });
   } catch (error) {
     return res.status(500).json({
@@ -61,40 +101,124 @@ export const register = async (req, res) => {
 };
 
 export const login = async (req, res) => {
-  const email = req.body.email;
+  const { email, otp, deviceId } = req.body;
   try {
-    const user = await UserModel.findOne({ email });
+    const user = await UserModel.findOne({ email }).populate({
+      path: 'notifications',
+      populate: [
+        {
+          path: 'sender',
+          select: '_id username avatar',
+        },
+      ],
+    });
     if (!user) {
       return res.status(400).json({
         success: false,
-        message: "User not found",
+        message: 'User not found',
       });
     }
     const ismatch = await bcrypt.compare(req.body.password, user.password);
     if (!ismatch) {
       return res.status(400).json({
         success: false,
-        message: "Password is incorrect",
+        message: 'Password is incorrect',
       });
+    }
+
+    // Determine whether OTP is required due to 2FA or device verification
+    const isDeviceVerificationOn = Boolean(user.isDeviceVerificationEnabled);
+    const hasDeviceId = typeof deviceId === 'string' && deviceId.trim().length > 0;
+    const isTrustedDevice = hasDeviceId
+      ? Array.isArray(user.trustedDevices) && user.trustedDevices.includes(deviceId)
+      : false;
+
+    const requiresOTP =
+      Boolean(user.is2FAEnabled) || (isDeviceVerificationOn && (!hasDeviceId || !isTrustedDevice));
+
+    if (requiresOTP) {
+      // If OTP is not provided, send OTP and require verification
+      if (!otp) {
+        const otpCode = generateOTP();
+        user.tempOTP = otpCode;
+        user.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+        await user.save();
+
+        // Send OTP via email
+        const html = getOTPTemplate(otpCode);
+
+        // fire-and-forget: don't block response on email sending
+        sendMail(user.email, 'Your Login Verification Code', html).catch((emailError) => {
+          console.error('Failed to send OTP email:', emailError);
+        });
+
+        return res.status(200).json({
+          success: true,
+          message: 'Verification code sent to your email',
+          requires2FA: true,
+          email: user.email,
+          expiresAt: user.otpExpiresAt,
+        });
+      }
+
+      // Verify OTP
+      if (!user.tempOTP || !user.otpExpiresAt) {
+        return res.status(400).json({
+          success: false,
+          message: 'No verification code found. Please request a new one.',
+        });
+      }
+
+      if (new Date() > user.otpExpiresAt) {
+        return res.status(400).json({
+          success: false,
+          message: 'Verification code has expired. Please request a new one.',
+        });
+      }
+
+      if (user.tempOTP !== otp) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid verification code',
+        });
+      }
+
+      // Clear OTP after successful verification
+      user.tempOTP = undefined;
+      user.otpExpiresAt = undefined;
+
+      // Trust device if device verification is enabled and deviceId provided
+      if (isDeviceVerificationOn && hasDeviceId) {
+        user.trustedDevices = Array.isArray(user.trustedDevices) ? user.trustedDevices : [];
+        if (!user.trustedDevices.includes(deviceId)) {
+          user.trustedDevices.push(deviceId);
+        }
+      }
     }
 
     const firstLogin = user.isFirstLogin;
 
     if (firstLogin) {
       user.isFirstLogin = false;
-      await user.save();
     }
 
-    const { password, role, ...rest } = user._doc;
+    await user.save();
+
+    const { password: userPassword, role, tempOTP, otpExpiresAt, ...rest } = user._doc;
     const accessToken = generateAccessToken(user);
     const refreshToken = generateRefreshToken(user);
 
     // save refresh token in cookie
-    res.cookie("refreshToken", refreshToken, { httpOnly: true });
+    res.cookie('refreshToken', refreshToken, { httpOnly: true });
+
+    // Fire-and-forget login alert email
+    if (user.isLoginAlertEnabled) {
+      sendLoginAlertEmail(req, user.email);
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Login successfully",
+      message: 'Login successfully',
       data: { ...rest, accessToken, isFirstLogin: firstLogin },
     });
   } catch (error) {
@@ -111,15 +235,13 @@ export const logout = async (req, res) => {
     if (!userId) {
       return res.status(400).json({
         success: false,
-        message: "User not found",
+        message: 'User not found',
       });
     }
-    res.clearCookie("refreshToken", {
+    res.clearCookie('refreshToken', {
       httpOnly: true,
     });
-    return res
-      .status(200)
-      .json({ success: true, message: "Logout successful" });
+    return res.status(200).json({ success: true, message: 'Logout successful' });
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -128,29 +250,133 @@ export const logout = async (req, res) => {
   }
 };
 
+
 export const refreshToken = async (req, res) => {
   const refreshToken = req.cookies.refreshToken;
   try {
     if (!refreshToken) {
-      return res
-        .status(401)
-        .json({ success: false, message: "You're not authenticated" });
+      return res.status(401).json({ success: false, message: "You're not authenticated" });
     }
     jwt.verify(refreshToken, process.env.JWT_REFRESHTOKEN_KEY, (err, user) => {
       if (err) {
-        return res
-          .status(404)
-          .json({ success: false, message: "Refreshtoken is invalid" });
+        return res.status(404).json({ success: false, message: 'Refreshtoken is invalid' });
       }
       const newAccessToken = generateAccessToken(user);
       const newRefreshToken = generateRefreshToken(user);
-      res.cookie("refreshToken", newRefreshToken, { httpOnly: true });
+      res.cookie('refreshToken', newRefreshToken, { httpOnly: true });
 
-      return res
-        .status(200)
-        .json({ success: true, accessToken: newAccessToken });
+      return res.status(200).json({ success: true, accessToken: newAccessToken });
     });
   } catch (error) {
     return res.status(400).json({ success: true, message: error.message });
+  }
+};
+
+// Check OTP and complete login (2FA verification step)
+export const checkOTP = async (req, res) => {
+  try {
+    const { email, otp, deviceId } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: 'Email and OTP are required' });
+    }
+
+    const user = await UserModel.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    if (!user.tempOTP || !user.otpExpiresAt) {
+      return res
+        .status(400)
+        .json({ success: false, message: 'No verification code found. Please request a new one.' });
+    }
+    if (new Date() > user.otpExpiresAt) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification code has expired. Please request a new one.',
+      });
+    }
+    if (user.tempOTP !== otp) {
+      return res.status(400).json({ success: false, message: 'Invalid verification code' });
+    }
+
+    // Clear OTP after successful verification
+    user.tempOTP = undefined;
+    user.otpExpiresAt = undefined;
+
+    // Trust device if device verification is enabled and deviceId provided
+    if (user.isDeviceVerificationEnabled && typeof deviceId === 'string' && deviceId.trim()) {
+      user.trustedDevices = Array.isArray(user.trustedDevices) ? user.trustedDevices : [];
+      if (!user.trustedDevices.includes(deviceId)) {
+        user.trustedDevices.push(deviceId);
+      }
+    }
+
+    const firstLogin = user.isFirstLogin;
+    if (firstLogin) {
+      user.isFirstLogin = false;
+    }
+    await user.save();
+
+    const { password: userPassword, role, tempOTP, otpExpiresAt, ...rest } = user._doc || {};
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    // save refresh token in cookie
+    res.cookie('refreshToken', refreshToken, { httpOnly: true });
+
+    // Fire-and-forget login alert email for 2FA completion as well
+    if (user.isLoginAlertEnabled) {
+      sendLoginAlertEmail(req, user.email);
+    }
+    return res.status(200).json({
+      success: true,
+      message: 'Login successfully',
+      data: { ...rest, accessToken, isFirstLogin: firstLogin },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// Resend OTP for 2FA
+export const resendOTP = async (req, res) => {
+  const { email } = req.body;
+  try {
+    const user = await UserModel.findOne({ email });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found',
+      });
+    }
+
+    if (!user.is2FAEnabled) {
+      return res.status(400).json({
+        success: false,
+        message: 'Two-Factor Authentication is not enabled for this account',
+      });
+    }
+
+    const otpCode = generateOTP();
+    user.tempOTP = otpCode;
+    user.otpExpiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+    await user.save();
+
+    // Send OTP via email
+    const html = getOTPTemplate(otpCode, true);
+
+    await sendMail(user.email, 'Your New Login Verification Code', html);
+
+    return res.status(200).json({
+      success: true,
+      message: 'New verification code sent to your email',
+      expiresAt: user.otpExpiresAt,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
   }
 };

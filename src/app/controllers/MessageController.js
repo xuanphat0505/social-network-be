@@ -156,8 +156,6 @@ export const sendMessage = async (req, res) => {
 
     await message.save();
 
-    // Fire-and-forget: update global + daily statistics
-    incrementMessageStats({ hasFiles: filesData.length > 0 });
 
     // 8. Kiểm tra để show avatar hay không
     const lastMessage = await MessageModel.findOne({
@@ -220,10 +218,6 @@ export const sendMessage = async (req, res) => {
       unreadCount: 0, // Sender không có unread count
     });
 
-    // 11. Update Statistics
-    incrementMessageStats({
-      filesCount: message.files ? message.files.length : 0,
-    });
 
     return res.status(201).json({
       success: true,

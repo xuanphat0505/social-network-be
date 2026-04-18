@@ -1,19 +1,20 @@
 export const SOCKET_EVENTS = {
-  ADDED_CONTACT: 'addedContact',
-  SEND_MESSAGE: 'sendMessage',
-  REACT_MESSAGE: 'reactMessage',
-  CHANGE_STATUS: 'changeStatus',
-  TYPING_MESSAGE: 'typing',
-  STOP_TYPING_MESSAGE: 'stopTyping',
-  UNREAD_MESSAGE: 'unreadMessage',
-  READ_MESSAGE: 'readMessage',
-  UPDATE_CHATLIST: 'updateChatList',
-  REVOKE_MESSAGE: 'revokeMessage',
-  DELETE_MESSAGE: 'deleteMessage',
-  FRIEND_ONLINE: 'friendOnline',
-  BLOCK_USER: 'blockedByUser',
-  UNBLOCK_USER: 'unblockedByUser',
-  PIN_MESSAGE: 'pinnedMessage',
+  ADDED_CONTACT: "addedContact",
+  SEND_MESSAGE: "sendMessage",
+  REACT_MESSAGE: "reactMessage",
+  CHANGE_STATUS: "changeStatus",
+  TYPING_MESSAGE: "typing",
+  STOP_TYPING_MESSAGE: "stopTyping",
+  UNREAD_MESSAGE: "unreadMessage",
+  READ_MESSAGE: "readMessage",
+  UPDATE_CHATLIST: "updateChatList",
+  REVOKE_MESSAGE: "revokeMessage",
+  DELETE_MESSAGE: "deleteMessage",
+  FRIEND_ONLINE: "friendOnline",
+  BLOCK_USER: "blockedByUser",
+  UNBLOCK_USER: "unblockedByUser",
+  PIN_MESSAGE: "pinnedMessage",
+  BROADCAST_NOTIFICATION: "broadcastNotification",
 };
 
 export const emitAddedContact = (io, receiverId, data) => {
@@ -21,9 +22,17 @@ export const emitAddedContact = (io, receiverId, data) => {
   io.to(receiverId.toString()).emit(SOCKET_EVENTS.ADDED_CONTACT, data);
 };
 
+export const emitBroadcastNotification = (io, data) => {
+  if (!io) return;
+  io.emit(SOCKET_EVENTS.BROADCAST_NOTIFICATION, data);
+};
+
 export const emitSendedMessage = (io, receiverId, data) => {
   if (!io || !receiverId) {
-    console.log('❌ emitSendedMessage: Missing io or receiverId', { io: !!io, receiverId });
+    console.log("❌ emitSendedMessage: Missing io or receiverId", {
+      io: !!io,
+      receiverId,
+    });
     return;
   }
   io.to(receiverId.toString()).emit(SOCKET_EVENTS.SEND_MESSAGE, data);

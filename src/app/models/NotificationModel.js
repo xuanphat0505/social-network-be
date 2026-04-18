@@ -14,8 +14,14 @@ const NotificationSchema = new mongoose.Schema(
     },
     type: {
       type: String,
-      enum: ["friend_request", "missed_call"],
+      enum: ["friend_request", "missed_call", "system"],
       required: true,
+    },
+    title: {
+      type: String,
+    },
+    content: {
+      type: String,
     },
     isRead: {
       type: Boolean,
@@ -25,7 +31,7 @@ const NotificationSchema = new mongoose.Schema(
       type: Boolean,
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const NotificationModel = mongoose.model("notifications", NotificationSchema);

@@ -1,6 +1,6 @@
-import MessageModel from '../models/MessageModel.js';
-import UserModel from '../models/UserModel.js';
-import crypto from 'crypto';
+import MessageModel from "../models/MessageModel.js";
+import UserModel from "../models/UserModel.js";
+import crypto from "crypto";
 
 import {
   emitSendedMessage,
@@ -10,20 +10,20 @@ import {
   emitUpdateChatList,
   emitRevokeMessage,
   emitPinnedMessage,
-} from '../../utils/socket.js';
+} from "../../utils/socket.js";
 
-const algorithm = 'aes-256-cbc';
-const secretKey = Buffer.from(process.env.MESSAGE_ENCRYPTION_KEY, 'hex'); // parse hex -> 32 bytes
+const algorithm = "aes-256-cbc";
+const secretKey = Buffer.from(process.env.MESSAGE_ENCRYPTION_KEY, "hex"); // parse hex -> 32 bytes
 
 // Encrypt
 const encryptMessage = (text) => {
   if (!text) return text;
   const iv = crypto.randomBytes(16); // Tạo IV mới cho mỗi message
   const cipher = crypto.createCipheriv(algorithm, secretKey, iv);
-  let encrypted = cipher.update(text, 'utf8', 'hex');
-  encrypted += cipher.final('hex');
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
   // Lưu cả IV cùng với message để giải mã
-  return iv.toString('hex') + ':' + encrypted;
+  return iv.toString("hex") + ":" + encrypted;
 };
 
 // Decrypt
@@ -31,20 +31,20 @@ const decryptMessage = (encryptedText) => {
   if (!encryptedText) return encryptedText;
 
   // Kiểm tra nếu là tin nhắn cũ (chưa mã hóa) - không có format IV:encrypted
-  if (!encryptedText.includes(':')) {
+  if (!encryptedText.includes(":")) {
     // Tin nhắn cũ chưa mã hóa, trả về nguyên bản
     return encryptedText;
   }
 
   try {
-    const parts = encryptedText.split(':');
+    const parts = encryptedText.split(":");
     if (parts.length < 2) {
       // Format không đúng, trả về nguyên bản
       return encryptedText;
     }
 
     const ivHex = parts.shift();
-    const encrypted = parts.join(':');
+    const encrypted = parts.join(":");
 
     // Validate IV length (should be 32 hex chars = 16 bytes)
     if (ivHex.length !== 32) {
@@ -52,14 +52,16 @@ const decryptMessage = (encryptedText) => {
       return encryptedText;
     }
 
-    const iv = Buffer.from(ivHex, 'hex');
+    const iv = Buffer.from(ivHex, "hex");
     const decipher = crypto.createDecipheriv(algorithm, secretKey, iv);
-    let decrypted = decipher.update(encrypted, 'hex', 'utf8');
-    decrypted += decipher.final('utf8');
+    let decrypted = decipher.update(encrypted, "hex", "utf8");
+    decrypted += decipher.final("utf8");
     return decrypted;
   } catch (error) {
     // Nếu giải mã thất bại, có thể là tin nhắn cũ chưa mã hóa
-    console.log('Decryption failed, returning original text (likely old unencrypted message)');
+    console.log(
+      "Decryption failed, returning original text (likely old unencrypted message)",
+    );
     return encryptedText;
   }
 };
@@ -68,18 +70,22 @@ export const sendMessage = async (req, res) => {
   const userId = req.user._id;
   const { receiverId } = req.params;
   let { content, type } = req.body;
-  const io = req.app.get('io');
+  const io = req.app.get("io");
 
   try {
     // 1. Kiểm tra sender & receiver tồn tại
     const sender = await UserModel.findById(userId);
     if (!sender) {
-      return res.status(404).json({ success: false, message: 'Sender not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Sender not found" });
     }
 
     const receiver = await UserModel.findById(receiverId);
     if (!receiver) {
-      return res.status(404).json({ success: false, message: 'Receiver not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Receiver not found" });
     }
 
     // 2. Kiểm tra bạn bè
@@ -89,7 +95,7 @@ export const sendMessage = async (req, res) => {
     if (!isFriend) {
       return res.status(403).json({
         success: false,
-        message: 'Receiver is not in your contacts',
+        message: "Receiver is not in your contacts",
       });
     }
 
@@ -112,31 +118,31 @@ export const sendMessage = async (req, res) => {
     let filesData = [];
     if (req.files && req.files.length > 0) {
       filesData = req.files.map((file) => {
-        const isImage = file.mimetype.startsWith('image/');
+        const isImage = file.mimetype.startsWith("image/");
         const sizeMB = (file.size / (1024 * 1024)).toFixed(2);
         return {
           originalName: file.originalname,
           fileUrl: file.path,
-          type: isImage ? 'image' : 'file',
+          type: isImage ? "image" : "file",
           sizeMB: Number(sizeMB),
         };
       });
     }
 
     // 5. Kiểm tra nội dung tin nhắn
-    if (!filesData.length && (!content || content.trim() === '')) {
+    if (!filesData.length && (!content || content.trim() === "")) {
       return res.status(400).json({
         success: false,
-        message: 'Message content is required',
+        message: "Message content is required",
       });
     }
 
     // 6. Xác định type của message
     const messageType = filesData.length
-      ? filesData.every((f) => f.type === 'image')
-        ? 'image'
-        : 'file'
-      : type || 'text';
+      ? filesData.every((f) => f.type === "image")
+        ? "image"
+        : "file"
+      : type || "text";
 
     // 7. Tạo message với content được mã hóa
     const message = new MessageModel({
@@ -150,6 +156,9 @@ export const sendMessage = async (req, res) => {
 
     await message.save();
 
+    // Fire-and-forget: update global + daily statistics
+    incrementMessageStats({ hasFiles: filesData.length > 0 });
+
     // 8. Kiểm tra để show avatar hay không
     const lastMessage = await MessageModel.findOne({
       $or: [
@@ -159,14 +168,15 @@ export const sendMessage = async (req, res) => {
       _id: { $ne: message._id },
     })
       .sort({ createdAt: -1 })
-      .select('senderId createdAt')
+      .select("senderId createdAt")
       .lean();
 
-    const showAvatar = !lastMessage || lastMessage.senderId.toString() !== userId.toString();
+    const showAvatar =
+      !lastMessage || lastMessage.senderId.toString() !== userId.toString();
 
     // 9. Populate user info
-    await message.populate('senderId', '_id username avatar status');
-    await message.populate('receiverId', '_id username avatar status');
+    await message.populate("senderId", "_id username avatar status");
+    await message.populate("receiverId", "_id username avatar status");
 
     // 10. Emit socket realtime với content đã giải mã
     const payload = {
@@ -210,9 +220,14 @@ export const sendMessage = async (req, res) => {
       unreadCount: 0, // Sender không có unread count
     });
 
+    // 11. Update Statistics
+    incrementMessageStats({
+      filesCount: message.files ? message.files.length : 0,
+    });
+
     return res.status(201).json({
       success: true,
-      message: 'Message sent successfully',
+      message: "Message sent successfully",
       data: payload,
     });
   } catch (error) {
@@ -227,15 +242,19 @@ export const getMessage = async (req, res) => {
 
   try {
     // Kiểm tra người gửi
-    const sender = await UserModel.findById(userId).select('_id');
+    const sender = await UserModel.findById(userId).select("_id");
     if (!sender) {
-      return res.status(404).json({ success: false, message: 'Sender not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Sender not found" });
     }
 
     // Kiểm tra người nhận
-    const receiver = await UserModel.findById(receiverId).select('_id');
+    const receiver = await UserModel.findById(receiverId).select("_id");
     if (!receiver) {
-      return res.status(404).json({ success: false, message: 'Receiver not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Receiver not found" });
     }
 
     const pageNum = parseInt(page);
@@ -250,8 +269,8 @@ export const getMessage = async (req, res) => {
       ],
     })
       .populate([
-        { path: 'senderId', select: '_id username avatar' },
-        { path: 'emoji.userId', select: '_id username avatar' },
+        { path: "senderId", select: "_id username avatar" },
+        { path: "emoji.userId", select: "_id username avatar" },
       ])
       .sort({ createdAt: -1 }) // mới nhất trước
       .skip(skip)
@@ -271,7 +290,8 @@ export const getMessage = async (req, res) => {
 
     const data = reversed.map((m, idx) => {
       const next = idx < reversed.length - 1 ? reversed[idx + 1] : null;
-      const showAvatar = !next || next.senderId._id.toString() !== m.senderId._id.toString();
+      const showAvatar =
+        !next || next.senderId._id.toString() !== m.senderId._id.toString();
       return {
         ...m,
         showAvatar,
@@ -283,7 +303,7 @@ export const getMessage = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Get messages success',
+      message: "Get messages success",
       data,
       pagination: {
         page: pageNum,
@@ -303,7 +323,9 @@ export const recentChatList = async (req, res) => {
   try {
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // Lấy tất cả tin nhắn liên quan đến user
@@ -311,8 +333,8 @@ export const recentChatList = async (req, res) => {
       $or: [{ senderId: userId }, { receiverId: userId }],
     })
       .sort({ createdAt: -1 }) // tin mới nhất trước
-      .populate('senderId', '_id username avatar status')
-      .populate('receiverId', '_id username avatar status')
+      .populate("senderId", "_id username avatar status")
+      .populate("receiverId", "_id username avatar status")
       .lean();
 
     // Gom theo partner
@@ -320,7 +342,9 @@ export const recentChatList = async (req, res) => {
 
     messages.forEach((msg) => {
       const partner =
-        msg.senderId._id.toString() === userId.toString() ? msg.receiverId : msg.senderId;
+        msg.senderId._id.toString() === userId.toString()
+          ? msg.receiverId
+          : msg.senderId;
 
       const partnerId = partner._id.toString();
 
@@ -341,7 +365,7 @@ export const recentChatList = async (req, res) => {
         (m) =>
           m.senderId._id.toString() === partnerId &&
           m.receiverId._id.toString() === userId.toString() &&
-          !m.isRead
+          !m.isRead,
       ).length;
 
       return {
@@ -356,7 +380,7 @@ export const recentChatList = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Recent chat list fetched successfully',
+      message: "Recent chat list fetched successfully",
       data: recentChats,
     });
   } catch (error) {
@@ -370,30 +394,43 @@ export const reactMessage = async (req, res) => {
   const { icon } = req.body;
 
   try {
-    const user = await UserModel.findById(userId).select('_id username avatar');
-    if (!user) return res.status(404).json({ success: false, message: 'User not found' });
+    const user = await UserModel.findById(userId).select("_id username avatar");
+    if (!user)
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
 
     const message = await MessageModel.findById(messageId);
-    if (!message) return res.status(404).json({ success: false, message: 'Message not found' });
+    if (!message)
+      return res
+        .status(404)
+        .json({ success: false, message: "Message not found" });
 
     const isParticipant =
       message.senderId.toString() === userId.toString() ||
       message.receiverId?.toString() === userId.toString();
     if (!isParticipant) {
-      return res.status(403).json({ success: false, message: 'Not allowed to react this message' });
+      return res
+        .status(403)
+        .json({ success: false, message: "Not allowed to react this message" });
     }
 
-    const io = req.app.get('io');
+    const io = req.app.get("io");
     const targetUserId =
-      message.senderId.toString() === userId.toString() ? message.receiverId : message.senderId;
+      message.senderId.toString() === userId.toString()
+        ? message.receiverId
+        : message.senderId;
 
     // Nếu không có icon => xóa reaction của user
     if (!icon) {
-      await MessageModel.updateOne({ _id: messageId }, { $pull: { emoji: { userId } } });
+      await MessageModel.updateOne(
+        { _id: messageId },
+        { $pull: { emoji: { userId } } },
+      );
 
       const updated = await MessageModel.findById(messageId).populate(
-        'emoji.userId',
-        '_id username avatar'
+        "emoji.userId",
+        "_id username avatar",
       );
 
       emitReactedMessage(io, targetUserId, {
@@ -403,28 +440,33 @@ export const reactMessage = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: 'Reaction removed',
+        message: "Reaction removed",
         data: updated,
       });
     }
 
     // Kiểm tra user đã react chưa
-    const existing = message.emoji.find((e) => e.userId.toString() === userId.toString());
+    const existing = message.emoji.find(
+      (e) => e.userId.toString() === userId.toString(),
+    );
 
     if (existing) {
       // Cập nhật icon
       await MessageModel.updateOne(
-        { _id: messageId, 'emoji.userId': userId },
-        { $set: { 'emoji.$.icon': icon } }
+        { _id: messageId, "emoji.userId": userId },
+        { $set: { "emoji.$.icon": icon } },
       );
     } else {
       // Thêm mới reaction
-      await MessageModel.updateOne({ _id: messageId }, { $push: { emoji: { userId, icon } } });
+      await MessageModel.updateOne(
+        { _id: messageId },
+        { $push: { emoji: { userId, icon } } },
+      );
     }
 
     const updated = await MessageModel.findById(messageId).populate(
-      'emoji.userId',
-      '_id username avatar'
+      "emoji.userId",
+      "_id username avatar",
     );
 
     emitReactedMessage(io, targetUserId, {
@@ -434,13 +476,13 @@ export const reactMessage = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Reaction added successfully',
+      message: "Reaction added successfully",
       data: updated,
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: error.message || 'Internal server error',
+      message: error.message || "Internal server error",
     });
   }
 };
@@ -451,7 +493,9 @@ export const unreadMessage = async (req, res) => {
     // 1. Kiểm tra user tồn tại
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // 2. Lấy toàn bộ tin nhắn chưa đọc gửi cho user này
@@ -459,14 +503,14 @@ export const unreadMessage = async (req, res) => {
       receiverId: userId,
       isRead: false,
     })
-      .populate('senderId', '_id username avatar') // lấy info người gửi
-      .populate('receiverId', '_id username avatar') // lấy info người nhận
+      .populate("senderId", "_id username avatar") // lấy info người gửi
+      .populate("receiverId", "_id username avatar") // lấy info người nhận
       .sort({ createdAt: -1 }); // sắp xếp mới nhất lên đầu
 
     // 3. Trả về dữ liệu
     return res.status(200).json({
       success: true,
-      message: 'Get unread messages success',
+      message: "Get unread messages success",
       data: unreadMessages,
       total: unreadMessages.length,
     });
@@ -485,7 +529,7 @@ export const readMessage = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: 'User not found',
+        message: "User not found",
       });
     }
 
@@ -493,7 +537,7 @@ export const readMessage = async (req, res) => {
     if (!sender) {
       return res.status(404).json({
         success: false,
-        message: 'Sender not found',
+        message: "Sender not found",
       });
     }
 
@@ -504,7 +548,7 @@ export const readMessage = async (req, res) => {
         receiverId: userId,
         isRead: false,
       },
-      { $set: { isRead: true } }
+      { $set: { isRead: true } },
     );
 
     // 📌 Lấy lại tất cả tin nhắn chưa đọc còn lại (từ người khác)
@@ -512,13 +556,13 @@ export const readMessage = async (req, res) => {
       receiverId: userId,
       isRead: false,
     })
-      .populate('senderId', '_id username avatar')
-      .populate('receiverId', '_id username avatar')
+      .populate("senderId", "_id username avatar")
+      .populate("receiverId", "_id username avatar")
       .sort({ createdAt: -1 });
 
     return res.status(200).json({
       success: true,
-      message: 'Marked messages as read',
+      message: "Marked messages as read",
       data: remainingUnreadMessages,
     });
   } catch (error) {
@@ -537,7 +581,9 @@ export const revokeMessageForSelf = async (req, res) => {
 
     const message = await MessageModel.findById(messageId);
     if (!message) {
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Message not found" });
     }
 
     // Check quyền: chỉ cho phép sender hoặc receiver ẩn
@@ -547,7 +593,7 @@ export const revokeMessageForSelf = async (req, res) => {
     ) {
       return res.status(403).json({
         success: false,
-        message: 'You are not allowed to hide this message',
+        message: "You are not allowed to hide this message",
       });
     }
 
@@ -560,12 +606,12 @@ export const revokeMessageForSelf = async (req, res) => {
 
     // populate thêm nếu cần (senderId, receiverId) để client dùng được luôn
     const updatedMessage = await MessageModel.findById(messageId)
-      .populate('senderId', '_id username avatar')
-      .populate('receiverId', '_id username avatar');
+      .populate("senderId", "_id username avatar")
+      .populate("receiverId", "_id username avatar");
 
     return res.status(200).json({
       success: true,
-      message: 'Message hidden for you',
+      message: "Message hidden for you",
       data: updatedMessage,
     });
   } catch (error) {
@@ -581,28 +627,34 @@ export const revokeMessageForBoth = async (req, res) => {
 
     const message = await MessageModel.findById(messageId);
     if (!message) {
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Message not found" });
     }
 
     // Chỉ cho phép người gửi thu hồi
     if (message.senderId.toString() !== userId.toString()) {
-      return res.status(403).json({ success: false, message: "You can't revoke this message" });
+      return res
+        .status(403)
+        .json({ success: false, message: "You can't revoke this message" });
     }
 
     if (message.isRevoked) {
-      return res.status(400).json({ success: false, message: 'Message already revoked' });
+      return res
+        .status(400)
+        .json({ success: false, message: "Message already revoked" });
     }
 
     // 🔹 Cập nhật trạng thái và nội dung (mã hóa nội dung thu hồi)
     message.isRevoked = true;
-    message.content = encryptMessage('Tin nhắn đã được thu hồi');
+    message.content = encryptMessage("Tin nhắn đã được thu hồi");
     message.files = []; // nếu muốn xoá file đính kèm khi thu hồi
     await message.save();
 
-    await message.populate('senderId', '_id username avatar status');
-    await message.populate('receiverId', '_id username avatar status');
+    await message.populate("senderId", "_id username avatar status");
+    await message.populate("receiverId", "_id username avatar status");
 
-    const io = req.app.get('io');
+    const io = req.app.get("io");
 
     // Emit cho cả 2 bên để cập nhật UI tin nhắn (với content đã giải mã)
     emitRevokeMessage(io, message.receiverId._id.toString(), {
@@ -623,7 +675,7 @@ export const revokeMessageForBoth = async (req, res) => {
       senderId: message.senderId,
       receiverId: message.receiverId,
       content: decryptMessage(message.content),
-      type: 'text',
+      type: "text",
       files: [],
       createdAt: message.createdAt,
       showAvatar: true,
@@ -646,7 +698,7 @@ export const revokeMessageForBoth = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Message revoked for both',
+      message: "Message revoked for both",
       data: message,
     });
   } catch (error) {
@@ -661,14 +713,16 @@ export const deleteMessage = async (req, res) => {
   try {
     const message = await MessageModel.findById(messageId);
     if (!message) {
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Message not found" });
     }
 
     // Chỉ cho phép nếu đã revoke trước đó
     if (!message.isRevoked && !message.deletedBy) {
       return res.status(400).json({
         success: false,
-        message: 'Message must be revoked before it can be deleted permanently',
+        message: "Message must be revoked before it can be deleted permanently",
       });
     }
 
@@ -692,13 +746,13 @@ export const deleteMessage = async (req, res) => {
       await MessageModel.findByIdAndDelete(messageId);
       return res.status(200).json({
         success: true,
-        message: 'Message permanently deleted from DB',
+        message: "Message permanently deleted from DB",
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: 'Message deleted for you',
+      message: "Message deleted for you",
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -713,7 +767,9 @@ export const deleteAllMessage = async (req, res) => {
     // kiểm tra user tồn tại
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // xóa tất cả tin nhắn giữa userId và receiverId (2 chiều)
@@ -726,10 +782,10 @@ export const deleteAllMessage = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'All messages have been deleted successfully',
+      message: "All messages have been deleted successfully",
     });
   } catch (error) {
-    console.error('❌ deleteAllMessage error:', error);
+    console.error("❌ deleteAllMessage error:", error);
     return res.status(500).json({
       success: false,
       message: error.message,
@@ -746,12 +802,16 @@ export const searchMessage = async (req, res) => {
     // kiểm tra user có tồn tại không
     const sender = await UserModel.findById(userId);
     if (!sender) {
-      return res.status(404).json({ success: false, message: 'Sender not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Sender not found" });
     }
 
     // nếu không có từ khóa thì trả rỗng
-    if (!keyword || keyword.trim() === '') {
-      return res.status(400).json({ success: false, message: 'Keyword is required' });
+    if (!keyword || keyword.trim() === "") {
+      return res
+        .status(400)
+        .json({ success: false, message: "Keyword is required" });
     }
 
     // tìm tin nhắn giữa 2 user chứa keyword (không phân biệt hoa thường)
@@ -765,7 +825,7 @@ export const searchMessage = async (req, res) => {
     if (!allMessages || allMessages.length === 0) {
       return res.status(404).json({
         success: false,
-        message: 'No messages found or messages are too old',
+        message: "No messages found or messages are too old",
       });
     }
 
@@ -777,7 +837,7 @@ export const searchMessage = async (req, res) => {
         content: msg.content ? decryptMessage(msg.content) : null,
       }))
       .filter(
-        (msg) => msg.content && new RegExp(keyword, 'i').test(msg.content) // ✅ check trước
+        (msg) => msg.content && new RegExp(keyword, "i").test(msg.content), // ✅ check trước
       );
 
     return res.status(200).json({
@@ -786,7 +846,9 @@ export const searchMessage = async (req, res) => {
       messages: matchedMessages,
     });
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Server error', error: error.message });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error", error: error.message });
   }
 };
 
@@ -798,13 +860,17 @@ export const pinnedMessage = async (req, res) => {
     // 1. Tìm user
     const sender = await UserModel.findById(userId);
     if (!sender) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     // 2. Tìm message
     const message = await MessageModel.findById(messageId);
     if (!message) {
-      return res.status(404).json({ success: false, message: 'Message not found' });
+      return res
+        .status(404)
+        .json({ success: false, message: "Message not found" });
     }
 
     // 3. Kiểm tra user có quyền pin (phải là sender hoặc receiver)
@@ -814,7 +880,7 @@ export const pinnedMessage = async (req, res) => {
     ) {
       return res.status(403).json({
         success: false,
-        message: 'Not authorized to pin this message',
+        message: "Not authorized to pin this message",
       });
     }
 
@@ -829,19 +895,21 @@ export const pinnedMessage = async (req, res) => {
       isPinned: message.isPinned,
     };
     // gửi realtime cho cả sender và receiver
-    const io = req.app.get('io');
+    const io = req.app.get("io");
     emitPinnedMessage(io, message.receiverId.toString(), payload);
     emitPinnedMessage(io, message.senderId.toString(), payload);
 
     return res.status(200).json({
       success: true,
       data: message,
-      message: message.isPinned ? 'Message pinned successfully' : 'Message unpinned successfully',
+      message: message.isPinned
+        ? "Message pinned successfully"
+        : "Message unpinned successfully",
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
-      message: 'Server error',
+      message: "Server error",
       error: error.message,
     });
   }

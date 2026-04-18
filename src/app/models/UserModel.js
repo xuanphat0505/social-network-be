@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 
 const UserSchema = new mongoose.Schema(
   {
@@ -24,39 +24,40 @@ const UserSchema = new mongoose.Schema(
     },
     location: {
       type: String,
-      default: '-',
+      default: "-",
     },
     slogan: {
       type: String,
-      default: 'Say something about yourself 👋',
+      default: "Say something about yourself 👋",
     },
     avatar: {
       type: String,
-      default: 'https://res.cloudinary.com/djmeybzjk/image/upload/v1745252587/01_odv3vg.jpg',
+      default:
+        "https://res.cloudinary.com/djmeybzjk/image/upload/v1745252587/01_odv3vg.jpg",
     },
     contacts: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'users',
+        ref: "users",
       },
     ],
 
     blockedUsers: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'users',
+        ref: "users",
       },
     ],
     notifications: [
       {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'notifications',
+        ref: "notifications",
       },
     ],
     status: {
       type: String,
-      enum: ['available', 'busy', 'invisible', 'offline'],
-      default: 'available',
+      enum: ["available", "busy", "invisible", "offline"],
+      default: "available",
     },
     lastSeenAt: {
       type: Date,
@@ -90,18 +91,22 @@ const UserSchema = new mongoose.Schema(
         type: String,
       },
     ],
+    preferences: {
+      emailNotifications: { type: Boolean, default: true },
+      pushNotifications: { type: Boolean, default: true },
+    },
     role: {
       type: String,
-      enum: ['user', 'admin'],
-      default: 'user',
+      enum: ["user", "admin"],
+      default: "user",
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 UserSchema.index({ status: 1 });
 UserSchema.index({ lastSeenAt: -1 });
 
-const UserModel = mongoose.model('users', UserSchema);
+const UserModel = mongoose.model("users", UserSchema);
 
 export default UserModel;

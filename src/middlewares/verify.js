@@ -32,6 +32,7 @@ export const verifyUser = (req, res, next) => {
     }
   });
 };
+
 export const verifyAdmin = (req, res, next) => {
   verifyToken(req, res, () => {
     if (req.user.role === "admin") {

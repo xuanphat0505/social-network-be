@@ -26,7 +26,7 @@ const generateAccessToken = (user) => {
     },
     process.env.JWT_ACCESSTOKEN_KEY,
     {
-      expiresIn: "60s",
+      expiresIn: "1d",
     },
   );
 };
@@ -244,7 +244,12 @@ export const login = async (req, res) => {
     const refreshToken = generateRefreshToken(user);
 
     // save refresh token in cookie
-    res.cookie("refreshToken", refreshToken, { httpOnly: true });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true, // Required for cross-site cookies
+      sameSite: "none", // Required for cross-site cookies
+      maxAge: 365 * 24 * 60 * 60 * 1000, // 365 ngày (ms) - Bắt buộc để cookie không bị mất khi reload trang
+    });
 
     // Fire-and-forget login alert email
     if (user.isLoginAlertEnabled) {
@@ -290,6 +295,9 @@ export const logout = async (req, res) => {
     }
     res.clearCookie("refreshToken", {
       httpOnly: true,
+      secure: true,
+      sameSite: "none",
+      maxAge: 0, // Xoá cookie ngay lập tức khi logout
     });
     return res
       .status(200)
@@ -318,7 +326,12 @@ export const refreshToken = async (req, res) => {
       }
       const newAccessToken = generateAccessToken(user);
       const newRefreshToken = generateRefreshToken(user);
-      res.cookie("refreshToken", newRefreshToken, { httpOnly: true });
+      res.cookie("refreshToken", newRefreshToken, {
+        httpOnly: true,
+        secure: true,
+        sameSite: "none",
+        maxAge: 365 * 24 * 60 * 60 * 1000, // 365 ngày (ms)
+      });
 
       return res
         .status(200)
@@ -398,7 +411,12 @@ export const checkOTP = async (req, res) => {
     const refreshToken = generateRefreshToken(user);
 
     // save refresh token in cookie
-    res.cookie("refreshToken", refreshToken, { httpOnly: true });
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: true, // Required for cross-site cookies
+      sameSite: "none", // Required for cross-site cookies
+      maxAge: 365 * 24 * 60 * 60 * 1000, // 365 ngày (ms)
+    });
 
     // Fire-and-forget login alert email for 2FA completion as well
     if (user.isLoginAlertEnabled) {

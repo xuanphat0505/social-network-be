@@ -148,6 +148,7 @@ io.on("connection", (socket) => {
         const messageData = {
           ...callMessage.toObject(),
           showAvatar: true,
+          isCallEndMessage: true,
         };
 
         if (senderSocket) {

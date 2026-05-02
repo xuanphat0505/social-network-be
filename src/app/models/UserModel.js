@@ -100,7 +100,13 @@ const UserSchema = new mongoose.Schema(
       enum: ["user", "admin"],
       default: "user",
     },
+    fcmTokens: [
+      {
+        type: String,
+      },
+    ],
   },
+
   { timestamps: true },
 );
 

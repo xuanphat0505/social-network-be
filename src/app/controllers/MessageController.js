@@ -1,6 +1,7 @@
 import MessageModel from "../models/MessageModel.js";
 import UserModel from "../models/UserModel.js";
 import crypto from "crypto";
+import { sendPushNotification } from "../helpers/fcmHelper.js";
 
 import {
   emitSendedMessage,
@@ -73,15 +74,18 @@ export const sendMessage = async (req, res) => {
   const io = req.app.get("io");
 
   try {
-    // 1. Kiểm tra sender & receiver tồn tại
-    const sender = await UserModel.findById(userId);
+    // 1. Kiểm tra sender & receiver tồn tại song song
+    const [sender, receiver] = await Promise.all([
+      UserModel.findById(userId).lean(),
+      UserModel.findById(receiverId).lean(),
+    ]);
+
     if (!sender) {
       return res
         .status(404)
         .json({ success: false, message: "Sender not found" });
     }
 
-    const receiver = await UserModel.findById(receiverId);
     if (!receiver) {
       return res
         .status(404)
@@ -144,7 +148,29 @@ export const sendMessage = async (req, res) => {
         : "file"
       : type || "text";
 
-    // 7. Tạo message với content được mã hóa
+    // 7. Thực hiện các truy vấn phụ trợ song song: 
+    // Lấy tin nhắn cuối để check showAvatar và đếm unreadCount
+    const [lastMessage, unreadCount] = await Promise.all([
+      MessageModel.findOne({
+        $or: [
+          { senderId: userId, receiverId },
+          { senderId: receiverId, receiverId: userId },
+        ],
+      })
+        .sort({ createdAt: -1 })
+        .select("senderId")
+        .lean(),
+      MessageModel.countDocuments({
+        senderId: userId,
+        receiverId: receiverId,
+        isRead: false,
+      }),
+    ]);
+
+    const showAvatar =
+      !lastMessage || lastMessage.senderId.toString() !== userId.toString();
+
+    // 8. Tạo và lưu message
     const message = new MessageModel({
       senderId: userId,
       receiverId,
@@ -156,78 +182,62 @@ export const sendMessage = async (req, res) => {
 
     await message.save();
 
-
-    // 8. Kiểm tra để show avatar hay không
-    const lastMessage = await MessageModel.findOne({
-      $or: [
-        { senderId: userId, receiverId },
-        { senderId: receiverId, receiverId: userId },
-      ],
-      _id: { $ne: message._id },
-    })
-      .sort({ createdAt: -1 })
-      .select("senderId createdAt")
-      .lean();
-
-    const showAvatar =
-      !lastMessage || lastMessage.senderId.toString() !== userId.toString();
-
-    // 9. Populate user info
-    await message.populate("senderId", "_id username avatar status");
-    await message.populate("receiverId", "_id username avatar status");
-
-    // 10. Emit socket realtime với content đã giải mã
+    // 9. Prepare payload (dùng thông tin đã có từ sender/receiver để tránh populate thêm)
     const payload = {
       _id: message._id,
-      senderId: message.senderId,
-      receiverId: message.receiverId,
-      content: message.content ? decryptMessage(message.content) : null,
+      senderId: {
+        _id: sender._id,
+        username: sender.username,
+        avatar: sender.avatar,
+        status: sender.status,
+      },
+      receiverId: {
+        _id: receiver._id,
+        username: receiver.username,
+        avatar: receiver.avatar,
+        status: receiver.status,
+      },
+      content: content, // Content gốc chưa mã hóa để gửi socket cho nhanh
       type: message.type,
       files: message.files,
       createdAt: message.createdAt,
       showAvatar,
     };
 
-    const unreadCount = await MessageModel.countDocuments({
-      senderId: userId,
-      receiverId: receiverId,
-      isRead: false,
-    });
-
-    // Emit to receiver (người nhận tin nhắn)
+    // 10. Emit socket realtime
+    // Emit to receiver
     emitSendedMessage(io, receiverId.toString(), payload);
     emitStopTypingMessage(io, receiverId.toString(), userId);
     emitGetUnreadMessages(io, receiverId.toString(), message);
     emitUpdateChatList(io, receiverId.toString(), {
       partnerId: payload.senderId._id,
-      lastMessage: {
-        ...payload,
-        content: payload.content, // Content đã được giải mã trong payload
-      },
-      unreadCount,
+      lastMessage: payload,
+      unreadCount: unreadCount + 1, // +1 vì tin nhắn này vừa mới lưu
     });
 
-    // Emit to sender (người gửi tin nhắn) để cập nhật chat của họ
-    emitSendedMessage(io, userId.toString(), payload);
-    emitUpdateChatList(io, userId.toString(), {
-      partnerId: payload.receiverId._id,
-      lastMessage: {
-        ...payload,
-        content: payload.content,
+    // 11. Gửi Push Notification qua FCM
+    sendPushNotification(receiverId, {
+      title: sender.username,
+      body: content || (filesData.length > 0 ? "Đã gửi tệp đính kèm" : "Tin nhắn mới"),
+      data: {
+        type: "new_message",
+        senderId: userId.toString(),
+        senderName: sender.username,
       },
-      unreadCount: 0, // Sender không có unread count
     });
-
 
     return res.status(201).json({
       success: true,
       message: "Message sent successfully",
       data: payload,
     });
+
   } catch (error) {
+    console.error("❌ sendMessage error:", error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
 
 export const getMessage = async (req, res) => {
   const userId = req.user._id;

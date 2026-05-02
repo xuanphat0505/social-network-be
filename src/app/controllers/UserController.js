@@ -549,6 +549,62 @@ export const exportUsers = async (req, res) => {
   }
 };
 
+import NotificationModel from "../models/NotificationModel.js";
+
+export const searchUsers = async (req, res) => {
+  const { keyword } = req.query;
+  const userId = req.user._id;
+  try {
+    const me = await UserModel.findById(userId).select("contacts");
+    const myFriends = me.contacts.map((id) => id.toString());
+
+    const query = {
+      _id: { $ne: userId },
+    };
+    if (keyword) {
+      query.$or = [
+        { username: { $regex: keyword, $options: "i" } },
+        { email: { $regex: keyword, $options: "i" } },
+      ];
+    }
+
+    const users = await UserModel.find(query)
+      .select("_id username email avatar code")
+      .limit(10)
+      .lean();
+
+    // Check relationship status for each user
+    const data = await Promise.all(
+      users.map(async (user) => {
+        const isFriend = myFriends.includes(user._id.toString());
+        let isPending = false;
+
+        if (!isFriend) {
+          const pendingRequest = await NotificationModel.findOne({
+            sender: userId,
+            receiver: user._id,
+            type: "friend_request",
+          });
+          isPending = !!pendingRequest;
+        }
+
+        return {
+          ...user,
+          isFriend,
+          isPending,
+        };
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 export const searchUsersAdmin = async (req, res) => {
   const { keyword } = req.query;
   try {
@@ -804,6 +860,38 @@ export const deleteUser = async (req, res) => {
       success: true,
       message: "User deleted successfully",
     });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+// Update FCM Token
+export const updateFCMToken = async (req, res) => {
+  const userId = req.user._id;
+  const { fcmToken } = req.body;
+
+  if (!fcmToken) {
+    return res
+      .status(400)
+      .json({ success: false, message: "FCM Token is required" });
+  }
+
+  try {
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    // Add token if not exists
+    if (!user.fcmTokens.includes(fcmToken)) {
+      user.fcmTokens.push(fcmToken);
+      await user.save();
+    }
+
+    return res
+      .status(200)
+      .json({ success: true, message: "FCM Token updated successfully" });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }

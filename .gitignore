@@ -15,3 +15,5 @@ node_modules
 .idea
 
 package-lock.json
+firebase-service-account.json
+

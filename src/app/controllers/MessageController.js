@@ -1,6 +1,7 @@
 import MessageModel from "../models/MessageModel.js";
 import UserModel from "../models/UserModel.js";
 import crypto from "crypto";
+import { sendPushNotification } from "../helpers/fcmHelper.js";
 
 import {
   emitSendedMessage,
@@ -214,12 +215,15 @@ export const sendMessage = async (req, res) => {
       unreadCount: unreadCount + 1, // +1 vì tin nhắn này vừa mới lưu
     });
 
-    // Emit to sender
-    emitSendedMessage(io, userId.toString(), payload);
-    emitUpdateChatList(io, userId.toString(), {
-      partnerId: payload.receiverId._id,
-      lastMessage: payload,
-      unreadCount: 0,
+    // 11. Gửi Push Notification qua FCM
+    sendPushNotification(receiverId, {
+      title: sender.username,
+      body: content || (filesData.length > 0 ? "Đã gửi tệp đính kèm" : "Tin nhắn mới"),
+      data: {
+        type: "new_message",
+        senderId: userId.toString(),
+        senderName: sender.username,
+      },
     });
 
     return res.status(201).json({
@@ -227,6 +231,7 @@ export const sendMessage = async (req, res) => {
       message: "Message sent successfully",
       data: payload,
     });
+
   } catch (error) {
     console.error("❌ sendMessage error:", error);
     return res.status(500).json({ success: false, message: error.message });

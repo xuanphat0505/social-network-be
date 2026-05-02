@@ -24,7 +24,12 @@ import UserModel from "./app/models/UserModel.js";
 
 // SOCKET EVENTS
 import { emitFriendOnline, emitChangedStatus } from "./utils/socket.js";
+// Firebase
+import "./config/firebase.js";
+import { sendPushNotification } from "./app/helpers/fcmHelper.js";
+
 dotenv.config();
+
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -87,12 +92,25 @@ io.on("connection", (socket) => {
   });
 
   // khi user gọi điện
-  socket.on("callUser", ({ to, from, signalData, type, isVideo }) => {
+  socket.on("callUser", async ({ to, from, signalData, type, isVideo }) => {
     const targetSocket = onlineUsers.get(to);
     if (targetSocket) {
       io.to(targetSocket).emit("callUser", { from, signalData, type, isVideo });
       console.log(`📞 ${from._id} gọi ${to} (video=${isVideo})`);
     }
+
+    // Gửi thông báo Push Notification qua FCM
+    sendPushNotification(to, {
+      title: "Cuộc gọi đến 📞",
+      body: `Bạn có cuộc gọi ${isVideo ? "video" : "audio"} từ ${from.username}`,
+      data: {
+        type: "incoming_call",
+        callerId: from._id.toString(),
+        callerName: from.username,
+        callerAvatar: from.avatar || "",
+        isVideo: isVideo.toString(),
+      },
+    });
   });
 
   // khi user trả lời
@@ -159,6 +177,16 @@ io.on("connection", (socket) => {
         }
 
         console.log("📞 Đã lưu tin nhắn cuộc gọi:", callMessage._id);
+
+        // Gửi thông báo hủy FCM (để đóng popup ở bên nhận nếu họ đang ở background)
+        sendPushNotification(to, {
+          title: "Cuộc gọi đã kết thúc",
+          body: `Cuộc gọi từ ${from.username} đã kết thúc`,
+          data: {
+            type: "cancel_call",
+            callerId: from._id.toString(),
+          },
+        });
       } catch (error) {
         console.error("❌ Lỗi lưu tin nhắn cuộc gọi:", error);
       }
@@ -196,6 +224,16 @@ io.on("connection", (socket) => {
 
       console.log(`⏰ Cuộc gọi nhỡ từ ${from.username} tới userId=${to}`);
 
+      // Gửi thông báo hủy FCM
+      sendPushNotification(to, {
+        title: "Cuộc gọi nhỡ",
+        body: `Bạn có cuộc gọi nhỡ từ ${from.username}`,
+        data: {
+          type: "cancel_call",
+          callerId: from._id.toString(),
+        },
+      });
+
       // 3. Gửi tin nhắn cuộc gọi cho cả 2 người
       const senderSocket = onlineUsers.get(from._id);
       const receiverSocket = onlineUsers.get(to);
@@ -210,7 +248,9 @@ io.on("connection", (socket) => {
       }
       if (receiverSocket) {
         io.to(receiverSocket).emit("sendMessage", messageData);
+        io.to(receiverSocket).emit("missedCall"); // Thêm dòng này để dập Modal phía người nhận
       }
+
 
       // 4. Gửi notification
       if (receiverSocket) {

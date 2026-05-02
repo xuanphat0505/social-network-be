@@ -21,6 +21,7 @@ import {
   getUserDetails,
   sendUserWarning,
   searchUsers,
+  updateFCMToken,
 } from "../app/controllers/UserController.js";
 import {
   getPreferences,
@@ -53,6 +54,7 @@ router.get("/code/:receiverId", verifyToken, getCodeFromUser);
 router.get("/receiver/:receiverId", verifyToken, getReceiverFriend);
 router.put("/block/:receiverId", verifyToken, blockUser);
 router.get("/search-users", verifyToken, searchUsers);
+router.put("/fcm-token", verifyToken, updateFCMToken);
 
 // Preferences Routes
 router.get("/preferences", verifyToken, getPreferences);
